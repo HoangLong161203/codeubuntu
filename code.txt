@@ -1,0 +1,325 @@
+#DHCP
+sudo apt update
+sudo apt install isc-dhcp-server -y
+
+sudo gedit /etc/dhcp/dhcpd.conf
+
+# Cấu hình cơ bản
+default-lease-time 600;   # Thời gian thuê IP mặc định (giây)
+max-lease-time 7200;      # Thời gian thuê IP tối đa (giây)
+
+# Tên miền và DNS
+option domain-name "example.com";   # Tên miền
+option domain-name-servers 8.8.8.8, 8.8.4.4; # DNS sử dụng
+
+# Cấu hình subnet
+subnet 192.168.1.0 netmask 255.255.255.0 {  # Mạng con
+    range 192.168.1.100 192.168.1.200;      # Dải IP cấp phát
+    option routers 192.168.1.1;             # Địa chỉ gateway
+    option broadcast-address 192.168.1.255; # Địa chỉ broadcast
+}
+
+
+sudo gedit /etc/default/isc-dhcp-server
+
+
+INTERFACESv4="eth0"
+INTERFACESv6=""
+
+
+sudo dhcpd -t
+sudo systemctl restart isc-dhcp-server
+sudo systemctl enable isc-dhcp-server
+
+sudo systemctl status isc-dhcp-server
+sudo tail -f /var/log/syslog
+
+---------------------------------------------
+#DNS
+sudo apt update
+sudo apt install bind9 bind9-utils bind9-doc -y
+
+sudo gedit /etc/bind/named.conf.options
+
+options {
+    directory "/var/cache/bind";
+
+    // DNS mặc định để chuyển tiếp (nếu DNS server không tìm thấy)
+    forwarders {
+        8.8.8.8;
+        8.8.4.4;
+    };
+
+    dnssec-validation auto;
+
+    listen-on port 53 { any; };      // Lắng nghe trên tất cả các giao diện
+    allow-query { any; };           // Cho phép mọi máy truy vấn
+};
+
+sudo nano /etc/bind/named.conf.local
+
+zone "example.com" {
+    type master;
+    file "/etc/bind/db.example.com";    // Tệp vùng cho miền
+};
+
+zone "1.168.192.in-addr.arpa" {
+    type master;
+    file "/etc/bind/db.192.168.1";      // Tệp vùng cho phân giải ngược
+};
+
+sudo cp /etc/bind/db.local /etc/bind/db.example.com
+
+sudo nano /etc/bind/db.example.com
+
+$TTL 604800
+@   IN  SOA ns1.example.com. admin.example.com. (
+        2025012101 ; Serial
+        604800     ; Refresh
+        86400      ; Retry
+        2419200    ; Expire
+        604800 )   ; Negative Cache TTL
+
+@       IN  NS      ns1.example.com.
+ns1     IN  A       192.168.1.1
+www     IN  A       192.168.1.100
+mail    IN  A       192.168.1.101
+@       IN  MX 10   mail.example.com.
+
+sudo cp /etc/bind/db.127 /etc/bind/db.192.168.1
+
+sudo nano /etc/bind/db.192.168.1
+
+---- Nội dung mẫu:
+$TTL 604800
+@   IN  SOA ns1.example.com. admin.example.com. (
+        2025012101 ; Serial
+        604800     ; Refresh
+        86400      ; Retry
+        2419200    ; Expire
+        604800 )   ; Negative Cache TTL
+
+@       IN  NS      ns1.example.com.
+1       IN  PTR     ns1.example.com.
+100     IN  PTR     www.example.com.
+101     IN  PTR     mail.example.com.
+
+sudo named-checkconf
+
+sudo named-checkzone example.com /etc/bind/db.example.com
+sudo named-checkzone 1.168.192.in-addr.arpa /etc/bind/db.192.168.1
+
+sudo systemctl restart bind9
+
+sudo systemctl enable bind9
+
+dig @192.168.1.1 example.com
+nslookup www.example.com 192.168.1.1
+
+sudo tail -f /var/log/syslog
+
+---------------------------------------------
+#Samba
+sudo apt update
+sudo apt install samba -y
+
+sudo gedit /etc/samba/smb.conf
+
+[global]
+   workgroup = WORKGROUP          # Tên nhóm làm việc (giống Windows)
+   security = user                # Chế độ bảo mật
+   map to guest = Bad User        # Chuyển người dùng không xác thực thành khách
+
+[SharedFolder]
+   path = /srv/samba/share        # Thư mục chia sẻ
+   browsable = yes                # Hiển thị thư mục trên mạng
+   writable = yes                 # Cho phép ghi
+   guest ok = yes                 # Cho phép truy cập không cần tài khoản
+   create mask = 0775             # Quyền mặc định khi tạo tệp
+   directory mask = 0775          # Quyền mặc định khi tạo thư mục
+
+
+sudo mkdir -p /srv/samba/share
+sudo chown -R nobody:nogroup /srv/samba/share  # Gán quyền cho người dùng khách
+sudo chmod -R 0775 /srv/samba/share           # Cấp quyền truy cập
+
+
+sudo systemctl restart smbd
+
+sudo systemctl enable smbd
+
+sudo systemctl status smbd
+
+testparm
+
+
+Trên máy Windows:
+Mở File Explorer và nhập địa chỉ IP của Samba Server, ví dụ: \\192.168.1.1.
+Thư mục chia sẻ sẽ hiển thị.
+
+smbstatus
+
+
+---------------------------------------------
+#FTP
+sudo apt update
+sudo apt install vsftpd -y
+
+sudo gedit /etc/vsftpd.conf
+
+# Bật hoặc tắt chế độ truy cập ẩn danh
+# Nếu bật (YES), bất kỳ ai cũng có thể truy cập mà không cần tài khoản
+
+anonymous_enable=NO
+
+# Cho phép người dùng cục bộ (những tài khoản đã có trên hệ thống)
+
+local_enable=YES
+
+# Cho phép người dùng tải tệp lên máy chủ
+
+write_enable=YES
+
+# Chỉ định thư mục gốc mà người dùng được phép truy cập
+# Các tệp/dữ liệu của người dùng FTP sẽ nằm trong thư mục này
+
+local_root=/srv/ftp
+
+# Chặn người dùng thoát ra khỏi thư mục gốc của họ (bảo mật cao hơn)
+
+chroot_local_user=YES
+
+# Kích hoạt chế độ Passive FTP (giúp tránh lỗi tường lửa khi kết nối)
+
+pasv_enable=YES
+# Chỉ định khoảng cổng sử dụng cho chế độ Passive
+
+pasv_min_port=40000
+pasv_max_port=50000
+
+# Định cấu hình cổng FTP mặc định (thường là 21)
+
+listen_port=21
+
+# Bật nhật ký chi tiết cho các hoạt động FTP
+
+xferlog_enable=YES
+xferlog_file=/var/log/vsftpd.log
+
+# Cấu hình SSL (tuỳ chọn, cần thiết nếu muốn sử dụng FTPS)
+
+ssl_enable=NO
+
+sudo mkdir -p /srv/ftp                # Tạo thư mục chính
+sudo chown -R ftp:ftp /srv/ftp        # Gán quyền sở hữu cho người dùng FTP mặc định
+sudo chmod -R 755 /srv/ftp            # Cấp quyền đọc và ghi
+
+sudo systemctl restart vsftpd
+
+sudo systemctl status vsftpd
+
+Kết nối từ máy khách:
+
+Từ Windows: Nhập ftp://<IP_server> trong File Explorer.
+
+---------------------------------------------
+#MySql
+sudo apt update
+sudo apt install mysql-server -y
+
+sudo mysql_secure_installation
+
+sudo systemctl status mysql
+
+sudo mysql -u root -p
+
+CREATE DATABASE my_database;
+
+CREATE USER 'my_user'@'localhost' IDENTIFIED BY 'my_password';
+GRANT ALL PRIVILEGES ON my_database.* TO 'my_user'@'localhost';
+FLUSH PRIVILEGES;
+
+SHOW DATABASES;
+
+SHOW GRANTS FOR 'my_user'@'localhost';
+
+sudo gedit /etc/mysql/mysql.conf.d/mysqld.cnf
+
+bind-address = 0.0.0.0
+
+sudo ufw allow 3306
+
+sudo systemctl restart mysql
+
+mysql -u my_user -p -h <IP_of_MySQL_server>
+
+#Để sao lưu cơ sở dữ liệu my_database:
+
+mysqldump -u root -p my_database > my_database_backup.sql
+
+#Để phục hồi cơ sở dữ liệu từ tệp sao lưu:
+
+mysql -u root -p my_database < my_database_backup.sql
+
+SHOW TABLES;
+DESCRIBE table_name;
+CREATE TABLE table_name (
+    column1 datatype,
+    column2 datatype,
+    ...
+);
+
+---------------------------------------------
+#Web
+sudo apt update
+sudo apt install apache2 -y
+
+sudo systemctl status apache2
+sudo systemctl start apache2
+
+sudo ufw allow 'Apache Full'
+
+http://localhost
+
+sudo mkdir -p /var/www/html/mywebsite
+sudo gedit /var/www/html/mywebsite/index.html
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Website</title>
+</head>
+<body>
+    <h1>Welcome to My Website!</h1>
+    <p>This is a simple page served by Apache.</p>
+</body>
+</html>
+
+sudo gedit /etc/apache2/sites-available/mywebsite.conf
+
+<VirtualHost *:80>
+    ServerAdmin webmaster@mywebsite.com
+    ServerName mywebsite.com
+    DocumentRoot /var/www/html/mywebsite
+    ErrorLog ${APACHE_LOG_DIR}/error.log
+    CustomLog ${APACHE_LOG_DIR}/access.log combined
+</VirtualHost>
+
+sudo a2ensite mywebsite.conf
+sudo a2enmod rewrite
+
+sudo systemctl restart apache2
+
+
+---------------------------------------------
+#ktra
+sudo systemctl enable <tên_dịch_vụ>
+sudo systemctl start <tên_dịch_vụ>
+sudo systemctl status <tên_dịch_vụ>
+
+
+
+
+
